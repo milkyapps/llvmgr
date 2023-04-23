@@ -18,9 +18,9 @@ pub(crate) async fn run(_: &Args, install: &InstallSubcommand) -> Result<(), Rep
 async fn llvm_16() -> Result<(), Report> {
     let mut tasks = Tasks::new();
 
-    let cmake = which::which("cmake").wrap_err("'cmake' cannot be found")?;
-    let ninja = which::which("ninja").wrap_err("'ninja' cannot be found")?;
-    let gcc = which::which("gcc").wrap_err("'gcc' cannot be found")?;
+    let _cmake = which::which("cmake").wrap_err("'cmake' cannot be found")?;
+    let _ninja = which::which("ninja").wrap_err("'ninja' cannot be found")?;
+    let _gcc = which::which("gcc").wrap_err("'gcc' cannot be found")?;
 
     let t0 = tasks
         .new_task("llvm-16.0.1.src.tar.xz")
