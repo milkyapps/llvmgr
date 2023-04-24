@@ -1,9 +1,13 @@
 use super::{
-    cache_dir, cache_path, cache_set_current_dir, download_unxz_untar, move_dir, read_shell,
-    remove_dir, spawn, write_shell,
+    cache_dir, cache_path, cache_set_current_dir, download_unxz_untar, get_cmake_default_generator,
+    move_dir, read_shell, remove_dir, search_cmake, spawn_cmake, write_shell,
 };
 use crate::{tasks::Tasks, Args, InstallSubcommand};
-use color_eyre::{eyre::Report, eyre::WrapErr};
+use color_eyre::{
+    eyre::WrapErr,
+    eyre::{ContextCompat, Report},
+    Help,
+};
 
 #[derive(Debug)]
 pub(crate) enum InstallError {}
@@ -18,9 +22,10 @@ pub(crate) async fn run(_: &Args, install: &InstallSubcommand) -> Result<(), Rep
 async fn llvm_16() -> Result<(), Report> {
     let mut tasks = Tasks::new();
 
-    let _cmake = which::which("cmake").wrap_err("'cmake' cannot be found")?;
-    let _ninja = which::which("ninja").wrap_err("'ninja' cannot be found")?;
-    let _gcc = which::which("gcc").wrap_err("'gcc' cannot be found")?;
+    let cmake = search_cmake()
+        .wrap_err("'cmake' cannot be found")
+        .with_suggestion(super::suggest_install_cmake)?;
+    let generator = get_cmake_default_generator(cmake)?;
 
     let t0 = tasks
         .new_task("llvm-16.0.1.src.tar.xz")
@@ -68,25 +73,59 @@ async fn llvm_16() -> Result<(), Report> {
 
     // Compile
     cache_set_current_dir("16.0.1/llvm/build")?;
-    spawn(
-        &t3,
-        "cmake",
-        ["..", "-DCMAKE_BUILD_TYPE=Release", "-G", "Ninja"],
-    )?;
-    spawn(&t3, "cmake", ["--build", "."])?;
+    if generator.contains("Ninja") {
+        spawn_cmake(&t3, ["..", "-DCMAKE_BUILD_TYPE=Release"])?;
+        spawn_cmake(&t3, ["--build", "."])?;
+    } else if generator.contains("Visual Studio") {
+        let cpus = if let Ok(cpus) = std::env::var("NUMBER_OF_PROCESSORS") {
+            cpus.parse::<usize>().unwrap_or(1)
+        } else {
+            1
+        };
+
+        spawn_cmake(&t3, [".."])?;
+        spawn_cmake(
+            &t3,
+            [
+                "--build",
+                ".",
+                "--config",
+                "Release",
+                "-j",
+                &cpus.to_string(),
+            ],
+        )?;
+    }
 
     // Move outputs
-    t4.set_subtask("bin");
-    move_dir(cache_path("16.0.1/llvm/build/bin")?, cache_path("16.0.1")?)?;
+    if generator.contains("Ninja") {
+        t4.set_subtask("bin");
+        move_dir(cache_path("16.0.1/llvm/build/bin")?, cache_path("16.0.1")?)?;
 
-    t4.set_subtask("lib");
-    move_dir(cache_path("16.0.1/llvm/build/lib")?, cache_path("16.0.1")?)?;
+        t4.set_subtask("lib");
+        move_dir(cache_path("16.0.1/llvm/build/lib")?, cache_path("16.0.1")?)?;
 
-    t4.set_subtask("include");
-    move_dir(
-        cache_path("16.0.1/llvm/build/include")?,
-        cache_path("16.0.1")?,
-    )?;
+        t4.set_subtask("include");
+        move_dir(
+            cache_path("16.0.1/llvm/build/include")?,
+            cache_path("16.0.1")?,
+        )?;
+    } else if generator.contains("Visual Studio") {
+        t4.set_subtask("bin");
+        move_dir(
+            cache_path("16.0.1/llvm/build/Release/bin")?,
+            cache_path("16.0.1")?,
+        )?;
+
+        t4.set_subtask("lib");
+        move_dir(
+            cache_path("16.0.1/llvm/build/Release/lib")?,
+            cache_path("16.0.1")?,
+        )?;
+
+        t4.set_subtask("include");
+        move_dir(cache_path("16.0.1/llvm/include")?, cache_path("16.0.1")?)?;
+    }
 
     // Clean source code
     t4.set_subtask("llvm");

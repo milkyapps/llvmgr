@@ -1,10 +1,10 @@
 use std::{
     collections::HashMap,
     io::{BufRead, Cursor, Read},
-    os::unix::prelude::MetadataExt,
     path::{Path, PathBuf},
 };
 
+use color_eyre::{eyre::Context, Help, Report};
 use fs_extra::dir::CopyOptions;
 use reqwest::IntoUrl;
 use serde::{Deserialize, Serialize};
@@ -140,7 +140,7 @@ async fn download(
 #[derive(Error, Debug)]
 pub(crate) enum UnxzError {
     #[error("{0}")]
-    Io(std::io::Error),
+    IO(std::io::Error),
 }
 
 pub(crate) async fn unxz(t: &TaskRef, path: impl AsRef<Path>) -> Result<Vec<u8>, UnxzError> {
@@ -149,8 +149,10 @@ pub(crate) async fn unxz(t: &TaskRef, path: impl AsRef<Path>) -> Result<Vec<u8>,
     let f = std::fs::File::options()
         .read(true)
         .open(path)
-        .map_err(UnxzError::Io)?;
-    let total = f.metadata().map_err(UnxzError::Io)?.size() as f64;
+        .map_err(UnxzError::IO)?;
+    let metadata = f.metadata().map_err(UnxzError::IO)?;
+
+    let total = metadata.len() as f64;
 
     let mut f = xz2::read::XzDecoder::new(f);
 
@@ -158,7 +160,7 @@ pub(crate) async fn unxz(t: &TaskRef, path: impl AsRef<Path>) -> Result<Vec<u8>,
 
     let mut buffer = [0u8; 16 * 1024];
     loop {
-        let s = f.read(&mut buffer).map_err(UnxzError::Io)?;
+        let s = f.read(&mut buffer).map_err(UnxzError::IO)?;
         if s == 0 {
             break;
         }
@@ -279,19 +281,18 @@ fn is_progress(line: &str) -> nom::IResult<&str, (usize, usize)> {
 
 #[derive(Error, Debug)]
 pub(crate) enum SpawnError {
-    #[error("{0}")]
-    CommandNotFound(which::Error),
+    #[error("command not found")]
+    CommandNotFound,
     #[error("{0}")]
     IO(std::io::Error),
 }
 
-pub(crate) fn spawn<A, I, S>(t: &TaskRef, name: A, args: I) -> Result<(), SpawnError>
+pub(crate) fn spawn_cmake<I, S>(t: &TaskRef, args: I) -> Result<(), SpawnError>
 where
-    A: AsRef<std::ffi::OsStr>,
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    let exe = which::which(name.as_ref()).map_err(SpawnError::CommandNotFound)?;
+    let exe = search_cmake().ok_or(SpawnError::CommandNotFound)?;
 
     let mut process = std::process::Command::new(&exe)
         .args(args)
@@ -364,4 +365,65 @@ pub(crate) fn remove_dir(dir: impl AsRef<Path>) -> Result<(), FileSystemError> {
     let _ = fs_extra::remove_items(&[dir]).map_err(FileSystemError::CannotRemove);
 
     Ok(())
+}
+
+pub(crate) fn search_cmake() -> Option<PathBuf> {
+    let cmake = which::which("cmake");
+    let cmake = if cmake.is_ok() {
+        cmake
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            cmake
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let path: PathBuf = "C:\\Program Files\\CMake\\bin\\cmake.exe".into();
+            if path.exists() {
+                Ok(path)
+            } else {
+                cmake
+            }
+        }
+    };
+
+    cmake.ok()
+}
+
+pub(crate) fn suggest_install_cmake() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        total = metadata.size() as f64;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "If chocolatey is installed, one can install cmake with `choco install cmake`".into()
+    }
+}
+
+pub(crate) fn get_cmake_default_generator(cmake: PathBuf) -> Result<String, Report> {
+    let output = std::process::Command::new(&cmake)
+        .args(["--help"])
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .map_err(SpawnError::IO)?;
+
+    for line in output.stdout.lines().flatten() {
+        if let Some(generator) = line.strip_prefix("* ").and_then(|s| s.split('=').next()) {
+            return Ok(generator.trim().into());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Err(color_eyre::eyre::eyre!("No defaut generator installed"))
+            .wrap_err("cmake has not found any generator")
+            .with_suggestion(|| "Install `ninja`")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Err(color_eyre::eyre::eyre!("No defaut generator installed"))
+            .wrap_err("cmake has not found any generator")
+            .with_suggestion(|| "Install `Microsoft Visual Studio`")
+    }
 }
