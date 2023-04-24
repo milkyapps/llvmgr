@@ -393,7 +393,7 @@ pub(crate) fn search_cmake() -> Option<PathBuf> {
 pub(crate) fn suggest_install_cmake() -> String {
     #[cfg(target_os = "linux")]
     {
-        total = metadata.size() as f64;
+        "Install cmake`".into()
     }
     #[cfg(target_os = "windows")]
     {

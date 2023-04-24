@@ -73,10 +73,7 @@ async fn llvm_16() -> Result<(), Report> {
 
     // Compile
     cache_set_current_dir("16.0.1/llvm/build")?;
-    if generator.contains("Ninja") {
-        spawn_cmake(&t3, ["..", "-DCMAKE_BUILD_TYPE=Release"])?;
-        spawn_cmake(&t3, ["--build", "."])?;
-    } else if generator.contains("Visual Studio") {
+    if generator.contains("Visual Studio") {
         let cpus = if let Ok(cpus) = std::env::var("NUMBER_OF_PROCESSORS") {
             cpus.parse::<usize>().unwrap_or(1)
         } else {
@@ -95,22 +92,8 @@ async fn llvm_16() -> Result<(), Report> {
                 &cpus.to_string(),
             ],
         )?;
-    }
 
-    // Move outputs
-    if generator.contains("Ninja") {
-        t4.set_subtask("bin");
-        move_dir(cache_path("16.0.1/llvm/build/bin")?, cache_path("16.0.1")?)?;
-
-        t4.set_subtask("lib");
-        move_dir(cache_path("16.0.1/llvm/build/lib")?, cache_path("16.0.1")?)?;
-
-        t4.set_subtask("include");
-        move_dir(
-            cache_path("16.0.1/llvm/build/include")?,
-            cache_path("16.0.1")?,
-        )?;
-    } else if generator.contains("Visual Studio") {
+        // Move outputs
         t4.set_subtask("bin");
         move_dir(
             cache_path("16.0.1/llvm/build/Release/bin")?,
@@ -125,6 +108,22 @@ async fn llvm_16() -> Result<(), Report> {
 
         t4.set_subtask("include");
         move_dir(cache_path("16.0.1/llvm/include")?, cache_path("16.0.1")?)?;
+    } else {
+        spawn_cmake(&t3, ["..", "-DCMAKE_BUILD_TYPE=Release", "-G", "Ninja"])?;
+        spawn_cmake(&t3, ["--build", "."])?;
+
+        // Move outputs
+        t4.set_subtask("bin");
+        move_dir(cache_path("16.0.1/llvm/build/bin")?, cache_path("16.0.1")?)?;
+
+        t4.set_subtask("lib");
+        move_dir(cache_path("16.0.1/llvm/build/lib")?, cache_path("16.0.1")?)?;
+
+        t4.set_subtask("include");
+        move_dir(
+            cache_path("16.0.1/llvm/build/include")?,
+            cache_path("16.0.1")?,
+        )?;
     }
 
     // Clean source code
