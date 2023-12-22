@@ -5,12 +5,16 @@ use argp::FromArgs;
 use color_eyre::{eyre::Report, eyre::WrapErr};
 use commands::read_shell;
 
+
 /// Instal LLVM tools
 #[derive(FromArgs, PartialEq, Debug)]
 #[argp(subcommand, name = "install")]
 struct InstallSubcommand {
+    /// Options: llvm
     #[argp(positional)]
     name: String,
+
+    /// Options: 16, 17
     #[argp(positional)]
     version: String,
 }
@@ -19,6 +23,7 @@ struct InstallSubcommand {
 #[derive(FromArgs, PartialEq, Debug)]
 #[argp(subcommand, name = "env")]
 struct EnvSubcommand {
+    /// Options: bash
     #[argp(positional)]
     shell: String,
 }
@@ -40,6 +45,7 @@ struct Args {
     #[argp(subcommand)]
     command: Commands,
 }
+
 #[tokio::main]
 async fn main() -> Result<(), Report> {
     color_eyre::install().unwrap();
@@ -47,15 +53,16 @@ async fn main() -> Result<(), Report> {
     let args: Args = argp::parse_args_or_exit(argp::DEFAULT);
 
     match &args.command {
-        Commands::Install(install) => commands::install::run(&args, install)
+        Commands::Install(cmd) => commands::install::run(&args, cmd)
             .await
-            .wrap_err_with(|| format!("Unable to install {} {}", install.name, install.version)),
-        Commands::Env(_) => {
-            let shell = read_shell().wrap_err("Unable to read shel configuration")?;
+            .wrap_err_with(|| format!("Unable to install {} {}", cmd.name, cmd.version)),
+        Commands::Env(cmd) if cmd.shell == "bash"=> {
+            let shell = read_shell().wrap_err("Unable to read shell configuration")?;
             for (k, v) in shell.env_vars {
                 println!("export {k}={v}",);
             }
             Ok(())
         }
+        _ => todo!()
     }
 }

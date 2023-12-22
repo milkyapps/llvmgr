@@ -1,3 +1,5 @@
+mod llvm;
+
 use std::{
     collections::HashMap,
     io::{BufRead, Cursor, Read},
