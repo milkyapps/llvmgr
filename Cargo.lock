@@ -592,7 +592,7 @@ checksum = "9b085a4f2cde5781fc4b1717f2e86c62f5cda49de7ba99a7c2eae02b61c9064c"
 
 [[package]]
 name = "llvmgr"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argp",
  "color-eyre",

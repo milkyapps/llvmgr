@@ -298,6 +298,7 @@ where
 
     let mut process = std::process::Command::new(&exe)
         .args(args)
+        .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
         .map_err(SpawnError::IO)?;
@@ -310,6 +311,7 @@ where
             if let Ok((_, (current, total))) = is_progress(&line) {
                 last_percentage = current as f64 / total as f64;
             }
+            
             t.set_subtask_with_percentage(&line, last_percentage);
         }
     }

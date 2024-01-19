@@ -10,6 +10,9 @@ use color_eyre::{
 };
 
 pub async fn llvm_16() -> Result<(), Report> {
+    let cache_root_version = cache_dir("16.0.1")?;
+    let _ = std::fs::remove_dir_all(&cache_root_version);
+
     let mut tasks = Tasks::new();
 
     let cmake = search_cmake()
@@ -101,6 +104,7 @@ pub async fn llvm_16() -> Result<(), Report> {
     } else {
         spawn_cmake(&t3, ["..", "-DCMAKE_BUILD_TYPE=Release", "-G", "Ninja"])?;
         spawn_cmake(&t3, ["--build", "."])?;
+        spawn_cmake(&t3, [&format!("-DCMAKE_INSTALL_PREFIX={}", cache_root_version.display()), "-P", "cmake_install.cmake"])?;
 
         // Move outputs
         t4.set_subtask("bin");
@@ -141,6 +145,9 @@ pub async fn llvm_16() -> Result<(), Report> {
 
 
 pub async fn llvm_17() -> Result<(), Report> {
+    let cache_root_version = cache_dir("17.0.6")?;
+    let _ = std::fs::remove_dir_all(&cache_root_version);
+
     let mut tasks = Tasks::new();
 
     let cmake = search_cmake()
@@ -213,6 +220,7 @@ pub async fn llvm_17() -> Result<(), Report> {
                 &cpus.to_string(),
             ],
         )?;
+        spawn_cmake(&t3, [&format!("-DCMAKE_INSTALL_PREFIX={}", cache_root_version.display()), "-P", "cmake_install.cmake"])?;
 
         // Move outputs
         t4.set_subtask("bin");
@@ -232,10 +240,12 @@ pub async fn llvm_17() -> Result<(), Report> {
     } else {
         spawn_cmake(&t3, ["..", "-DCMAKE_BUILD_TYPE=Release", "-G", "Ninja"])?;
         spawn_cmake(&t3, ["--build", "."])?;
+        spawn_cmake(&t3, [&format!("-DCMAKE_INSTALL_PREFIX={}", cache_root_version.display()), "-P", "cmake_install.cmake"])?;
 
         // Move outputs
         t4.set_subtask("bin");
         move_dir(cache_path("17.0.6/llvm/build/bin")?, cache_path("17.0.6")?)?;
+        move_dir(cache_path("17.0.6/llvm/build/tools")?, cache_path("17.0.6")?)?;
 
         t4.set_subtask("lib");
         move_dir(cache_path("17.0.6/llvm/build/lib")?, cache_path("17.0.6")?)?;
