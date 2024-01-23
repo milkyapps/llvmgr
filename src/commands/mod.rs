@@ -2,7 +2,7 @@ mod llvm;
 
 use std::{
     collections::HashMap,
-    io::{BufRead, Cursor, Read},
+    io::{BufRead, Cursor, Read, Seek},
     path::{Path, PathBuf},
 };
 
@@ -112,17 +112,12 @@ async fn download(
         return Err(DownloadError::Http(status));
     }
 
-    let content_length = req
-        .headers()
-        .get(reqwest::header::CONTENT_LENGTH)
-        .ok_or_else(|| DownloadError::ContentLength("not present".into()))?
-        .to_str()
-        .map_err(|err| DownloadError::ContentLength(err.to_string()))?
-        .parse::<f64>()
-        .map_err(|err| DownloadError::ContentLength(err.to_string()))?;
+    let content_length = req.headers().get(reqwest::header::CONTENT_LENGTH).and_then(|x| {
+        x.to_str().ok()?.parse::<f64>().ok()
+    });
 
     use futures_util::StreamExt;
-    let mut complete = 0.0;
+    let mut completed = 0.0;
     let mut stream = req.bytes_stream();
     while let Some(item) = stream.next().await {
         let bytes = item.map_err(DownloadError::Reqwest)?;
@@ -130,8 +125,14 @@ async fn download(
             .write_all(&bytes)
             .await
             .map_err(DownloadError::IO)?;
-        complete += bytes.len() as f64 / content_length;
-        t.set_percentage(complete)
+
+        if let Some(content_length) = content_length.as_ref() {
+            completed += bytes.len() as f64 / content_length;
+            t.set_percentage(completed)
+        } else {
+            completed += bytes.len() as f64;
+            t.set_subtask(&format!("{} bytes", completed));
+        }
     }
 
     Ok(DownloadResult {
@@ -143,6 +144,35 @@ async fn download(
 pub(crate) enum UnxzError {
     #[error("{0}")]
     IO(std::io::Error),
+}
+
+pub(crate) async fn ungz(t: &TaskRef, path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
+    t.set_subtask("ungz-ing");
+
+    let f = std::fs::File::options()
+        .read(true)
+        .open(path)?;
+
+    let metadata = f.metadata()?;
+    let total = metadata.len() as f64;
+
+    let mut f = libflate::gzip::Decoder::new(f)?;
+
+    let mut out = vec![];
+
+    let mut buffer = [0u8; 16 * 1024];
+    loop {
+        let s = f.read(&mut buffer)?;
+        if s == 0 {
+            break;
+        }
+        out.extend(&buffer[0..s]);
+
+        let inner_pos = f.as_inner_ref().seek(std::io::SeekFrom::Current(0))?;
+        t.set_percentage(inner_pos as f64 / total)
+    }
+
+    Ok(out)
 }
 
 pub(crate) async fn unxz(t: &TaskRef, path: impl AsRef<Path>) -> Result<Vec<u8>, UnxzError> {
@@ -239,11 +269,13 @@ pub(crate) fn untar_from_vec(
 }
 
 #[derive(Error, Debug)]
-pub(crate) enum DownloadXzUntar {
+pub(crate) enum DownloadDecompressError {
     #[error("download: {0}")]
     Download(DownloadError),
     #[error("unxz: {0}")]
     Unxz(UnxzError),
+    #[error("ungz: {0}")]
+    Ungz(std::io::Error),
     #[error("untar: {0}")]
     Untar(UntarError),
 }
@@ -252,19 +284,30 @@ pub(crate) async fn download_unxz_untar(
     t: &TaskRef,
     url: impl IntoUrl,
     dest: impl AsRef<Path>,
-) -> Result<(), DownloadXzUntar> {
-    // let dest = dest.as_ref();
-    // if dest.exists() {
-    //     return;
-    // }
-
-    let llvm_tar_xz = download(t, url).await.map_err(DownloadXzUntar::Download)?;
+) -> Result<(), DownloadDecompressError> {
+    let llvm_tar_xz = download(t, url).await.map_err(DownloadDecompressError::Download)?;
     let llvm_tar = unxz(t, &llvm_tar_xz.path)
         .await
-        .map_err(DownloadXzUntar::Unxz)?;
-    untar_from_vec(t, llvm_tar, dest).map_err(DownloadXzUntar::Untar)?;
+        .map_err(DownloadDecompressError::Unxz)?;
+    untar_from_vec(t, llvm_tar, dest).map_err(DownloadDecompressError::Untar)?;
 
     Ok(())
+}
+
+
+pub(crate) async fn download_ungz_untar(
+    t: &TaskRef,
+    url: impl IntoUrl,
+    dest: impl AsRef<Path>,
+) -> Result<PathBuf, DownloadDecompressError> {
+    let llvm_tar_gz = download(t, url).await.map_err(DownloadDecompressError::Download)?;
+    let llvm_tar_gz_file_path = llvm_tar_gz.path.to_path_buf(); 
+    let llvm_tar = ungz(t, &llvm_tar_gz.path)
+        .await
+        .map_err(DownloadDecompressError::Ungz)?;
+    untar_from_vec(t, llvm_tar, dest).map_err(DownloadDecompressError::Untar)?;
+
+    Ok(llvm_tar_gz_file_path)
 }
 
 // parses strings like: "[179/3416]"
@@ -316,6 +359,8 @@ where
         }
     }
     process.wait().map_err(SpawnError::IO)?;
+
+    t.set_subtask_with_percentage("", 1.0);
 
     Ok(())
 }

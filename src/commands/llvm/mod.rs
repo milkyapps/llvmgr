@@ -1,6 +1,5 @@
 use super::{
-    cache_dir, cache_path, cache_set_current_dir, download_unxz_untar, get_cmake_default_generator,
-    move_dir, read_shell, remove_dir, search_cmake, spawn_cmake, write_shell,
+    cache_dir, cache_path, cache_set_current_dir, download_ungz_untar, download_unxz_untar, get_cmake_default_generator, move_dir, read_shell, remove_dir, search_cmake, spawn_cmake, write_shell
 };
 use crate::tasks::Tasks;
 use color_eyre::{
@@ -8,6 +7,13 @@ use color_eyre::{
     eyre::{ContextCompat, Report},
     Help,
 };
+
+pub fn download_url(version: &str) -> (String, String) {
+    (
+        format!("https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-{version}.tar.gz"),
+        format!("llvmorg-{version}.tar.gz")
+    )
+}
 
 pub async fn llvm_16() -> Result<(), Report> {
     let cache_root_version = cache_dir("16.0.1")?;
@@ -145,8 +151,12 @@ pub async fn llvm_16() -> Result<(), Report> {
 
 
 pub async fn llvm_17() -> Result<(), Report> {
-    let cache_root_version = cache_dir("17.0.6")?;
-    let _ = std::fs::remove_dir_all(&cache_root_version);
+    let version = "17.0.6";
+
+    let version_root_folder = cache_dir(version)?;
+    let llvm_source_code_folder = cache_dir("17.0.6/src")?;
+
+    let (source_code_url, source_code_filename) = download_url(version);
 
     let mut tasks = Tasks::new();
 
@@ -156,51 +166,31 @@ pub async fn llvm_17() -> Result<(), Report> {
     let generator = get_cmake_default_generator(cmake)?;
 
     let t0 = tasks
-        .new_task("llvm-17.0.6.src.tar.xz")
+        .new_task(source_code_filename.as_str())
         .wrap_err("Cannot report progress")?;
     let t1 = tasks
-        .new_task("cmake-17.0.6.src.tar.xz")
-        .wrap_err("Cannot report progress")?;
-    let t2 = tasks
-        .new_task("third-party-17.0.6.src.tar.xz")
-        .wrap_err("Cannot report progress")?;
-    let t3 = tasks
         .new_task("Compilation")
         .wrap_err("Cannot report progress")?;
-    let t4 = tasks
-        .new_task("Cleaning")
+    let t2 = tasks
+        .new_task("Installation")
         .wrap_err("Cannot report progress")?;
-    let t5 = tasks
-        .new_task("Env Vars")
+    let t3 = tasks
+        .new_task("Configuring shell")
         .wrap_err("Cannot report progress")?;
 
-    // Download and uncompress files
-    let url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/llvm-17.0.6.src.tar.xz";
-    download_unxz_untar(&t0, url, cache_dir("17.0.6/llvm")?)
+    let _ = std::fs::remove_dir_all(&version_root_folder);
+
+    // Download and uncompress source code
+    // 194990759 bytes
+    let llvm_tar_gz_file_path = download_ungz_untar(&t0, source_code_url, llvm_source_code_folder)
         .await
-        .wrap_err("Processing llvm-17.0.6.src.tar.xz")?;
+        .wrap_err("Downloading source code")?;
+    // t0.set_subtask("Cleaning downloaded files...");
+    // let _ = std::fs::remove_file(llvm_tar_gz_file_path);
     t0.finish();
 
-    let url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/cmake-17.0.6.src.tar.xz";
-    download_unxz_untar(&t1, url, cache_dir("17.0.6/cmake")?).await?;
-    t1.finish();
-
-    let url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/third-party-17.0.6.src.tar.xz";
-    download_unxz_untar(&t2, url, cache_dir("17.0.6/third-party")?).await?;
-    t2.finish();
-
-    // Delete downloaded files
-    t4.set_subtask("llvm-17.0.6.src.tar.xz");
-    let _ = std::fs::remove_file(cache_path("llvm-17.0.6.src.tar.xz")?);
-
-    t4.set_subtask("cmake-17.0.6.src.tar.xz");
-    let _ = std::fs::remove_file(cache_path("cmake-17.0.6.src.tar.xz")?);
-
-    t4.set_subtask("third-party-17.0.6.src.tar.xz");
-    let _ = std::fs::remove_file(cache_path("third-party-17.0.6.src.tar.xz")?);
-
-    // Compile
-    cache_set_current_dir("17.0.6/llvm/build")?;
+    // Compilation
+    cache_set_current_dir("17.0.6/src/build")?;
     if generator.contains("Visual Studio") {
         let cpus = if let Ok(cpus) = std::env::var("NUMBER_OF_PROCESSORS") {
             cpus.parse::<usize>().unwrap_or(1)
@@ -208,9 +198,9 @@ pub async fn llvm_17() -> Result<(), Report> {
             1
         };
 
-        spawn_cmake(&t3, [".."])?;
+        spawn_cmake(&t1, ["../llvm", "-DLLVM_ENABLE_PROJECTS=lld"])?;
         spawn_cmake(
-            &t3,
+            &t1,
             [
                 "--build",
                 ".",
@@ -220,54 +210,16 @@ pub async fn llvm_17() -> Result<(), Report> {
                 &cpus.to_string(),
             ],
         )?;
-        spawn_cmake(&t3, [&format!("-DCMAKE_INSTALL_PREFIX={}", cache_root_version.display()), "-P", "cmake_install.cmake"])?;
-
-        // Move outputs
-        t4.set_subtask("bin");
-        move_dir(
-            cache_path("17.0.6/llvm/build/Release/bin")?,
-            cache_path("17.0.6")?,
-        )?;
-
-        t4.set_subtask("lib");
-        move_dir(
-            cache_path("17.0.6/llvm/build/Release/lib")?,
-            cache_path("17.0.6")?,
-        )?;
-
-        t4.set_subtask("include");
-        move_dir(cache_path("17.0.6/llvm/include")?, cache_path("17.0.6")?)?;
     } else {
-        spawn_cmake(&t3, ["..", "-DCMAKE_BUILD_TYPE=Release", "-G", "Ninja"])?;
-        spawn_cmake(&t3, ["--build", "."])?;
-        spawn_cmake(&t3, [&format!("-DCMAKE_INSTALL_PREFIX={}", cache_root_version.display()), "-P", "cmake_install.cmake"])?;
-
-        // Move outputs
-        t4.set_subtask("bin");
-        move_dir(cache_path("17.0.6/llvm/build/bin")?, cache_path("17.0.6")?)?;
-        move_dir(cache_path("17.0.6/llvm/build/tools")?, cache_path("17.0.6")?)?;
-
-        t4.set_subtask("lib");
-        move_dir(cache_path("17.0.6/llvm/build/lib")?, cache_path("17.0.6")?)?;
-
-        t4.set_subtask("include");
-        move_dir(
-            cache_path("17.0.6/llvm/build/include")?,
-            cache_path("17.0.6")?,
-        )?;
+        spawn_cmake(&t1, ["../llvm", "-DCMAKE_BUILD_TYPE=Release", "-G", "Ninja", "-DLLVM_ENABLE_PROJECTS=lld"])?;
+        spawn_cmake(&t1, ["--build", "."])?;
     }
 
-    // Clean source code
-    t4.set_subtask("llvm");
-    remove_dir(cache_path("17.0.6/llvm")?)?;
-    t4.set_subtask("cmake");
-    remove_dir(cache_path("17.0.6/cmake")?)?;
-    t4.set_subtask("third-party");
-    remove_dir(cache_path("17.0.6/third-party")?)?;
-    t4.finish();
+    // Installation
+    spawn_cmake(&t2, [&format!("-DCMAKE_INSTALL_PREFIX={}", version_root_folder.display()), "-P", "cmake_install.cmake"])?;
 
     // Setup env vars
-    t5.set_subtask("configuring shell");
+    t3.set_subtask("configuring shell");
     let mut shell = read_shell()?;
     let var = shell
         .env_vars
@@ -275,7 +227,7 @@ pub async fn llvm_17() -> Result<(), Report> {
         .or_default();
     *var = cache_dir("17.0.6")?.display().to_string();
     write_shell(&shell)?;
-    t5.finish();
+    t3.finish();
 
     Ok(())
 }
