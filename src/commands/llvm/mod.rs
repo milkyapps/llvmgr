@@ -202,8 +202,8 @@ pub async fn llvm_17() -> Result<(), Report> {
     let llvm_tar_gz_file_path = download_ungz_untar(&t0, source_code_url, llvm_source_code_folder)
         .await
         .wrap_err("Downloading source code")?;
-    // t0.set_subtask("Cleaning downloaded files...");
-    // let _ = std::fs::remove_file(llvm_tar_gz_file_path);
+    t0.set_subtask("Cleaning downloaded files...");
+    let _ = std::fs::remove_file(llvm_tar_gz_file_path);
     t0.finish();
 
     // Compilation
@@ -296,12 +296,12 @@ pub async fn llvm_18() -> Result<(), Report> {
     let _ = std::fs::remove_dir_all(&version_root_folder);
 
     // Download and uncompress source code
-    // ? bytes
-    let _ = download_ungz_untar(&t0, source_code_url, llvm_source_code_folder)
+    // 205541214 bytes
+    let llvm_tar_gz_file_path = download_ungz_untar(&t0, source_code_url, llvm_source_code_folder)
         .await
         .wrap_err("Downloading source code")?;
-    // t0.set_subtask("Cleaning downloaded files...");
-    // let _ = std::fs::remove_file(llvm_tar_gz_file_path);
+    t0.set_subtask("Cleaning downloaded files...");
+    let _ = std::fs::remove_file(llvm_tar_gz_file_path);
     t0.finish();
 
     // Compilation
