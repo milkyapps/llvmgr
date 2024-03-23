@@ -36,7 +36,7 @@ fn cache_root() -> Result<PathBuf, FileSystemError> {
     Ok(root)
 }
 
-fn cache_dir(path: impl AsRef<Path>) -> Result<PathBuf, FileSystemError> {
+fn dir_inside_cache_folder(path: impl AsRef<Path>) -> Result<PathBuf, FileSystemError> {
     let dirs = directories::UserDirs::new().ok_or(FileSystemError::UserDirError)?;
     let p = dirs.home_dir().join(".cache/llvmgr").join(path);
     std::fs::create_dir_all(&p).map_err(FileSystemError::IO)?;
@@ -49,8 +49,8 @@ pub(crate) fn cache_path(path: impl AsRef<Path>) -> Result<PathBuf, FileSystemEr
     Ok(p)
 }
 
-fn cache_set_current_dir(path: impl AsRef<Path>) -> Result<(), FileSystemError> {
-    let p = cache_dir(path)?;
+fn set_current_dir_inside_cache_folder(path: impl AsRef<Path>) -> Result<(), FileSystemError> {
+    let p = dir_inside_cache_folder(path)?;
     std::env::set_current_dir(p).map_err(FileSystemError::IO)
 }
 
@@ -112,9 +112,10 @@ async fn download(
         return Err(DownloadError::Http(status));
     }
 
-    let content_length = req.headers().get(reqwest::header::CONTENT_LENGTH).and_then(|x| {
-        x.to_str().ok()?.parse::<f64>().ok()
-    });
+    let content_length = req
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|x| x.to_str().ok()?.parse::<f64>().ok());
 
     use futures_util::StreamExt;
     let mut completed = 0.0;
@@ -149,9 +150,7 @@ pub(crate) enum UnxzError {
 pub(crate) async fn ungz(t: &TaskRef, path: impl AsRef<Path>) -> Result<Vec<u8>, std::io::Error> {
     t.set_subtask("ungz-ing");
 
-    let f = std::fs::File::options()
-        .read(true)
-        .open(path)?;
+    let f = std::fs::File::options().read(true).open(path)?;
 
     let metadata = f.metadata()?;
     let total = metadata.len() as f64;
@@ -285,7 +284,9 @@ pub(crate) async fn download_unxz_untar(
     url: impl IntoUrl,
     dest: impl AsRef<Path>,
 ) -> Result<(), DownloadDecompressError> {
-    let llvm_tar_xz = download(t, url).await.map_err(DownloadDecompressError::Download)?;
+    let llvm_tar_xz = download(t, url)
+        .await
+        .map_err(DownloadDecompressError::Download)?;
     let llvm_tar = unxz(t, &llvm_tar_xz.path)
         .await
         .map_err(DownloadDecompressError::Unxz)?;
@@ -294,14 +295,15 @@ pub(crate) async fn download_unxz_untar(
     Ok(())
 }
 
-
 pub(crate) async fn download_ungz_untar(
     t: &TaskRef,
     url: impl IntoUrl,
     dest: impl AsRef<Path>,
 ) -> Result<PathBuf, DownloadDecompressError> {
-    let llvm_tar_gz = download(t, url).await.map_err(DownloadDecompressError::Download)?;
-    let llvm_tar_gz_file_path = llvm_tar_gz.path.to_path_buf(); 
+    let llvm_tar_gz = download(t, url)
+        .await
+        .map_err(DownloadDecompressError::Download)?;
+    let llvm_tar_gz_file_path = llvm_tar_gz.path.to_path_buf();
     let llvm_tar = ungz(t, &llvm_tar_gz.path)
         .await
         .map_err(DownloadDecompressError::Ungz)?;
@@ -354,7 +356,7 @@ where
             if let Ok((_, (current, total))) = is_progress(&line) {
                 last_percentage = current as f64 / total as f64;
             }
-            
+
             t.set_subtask_with_percentage(&line, last_percentage);
         }
     }

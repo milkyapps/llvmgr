@@ -5,7 +5,6 @@ use argp::FromArgs;
 use color_eyre::{eyre::Report, eyre::WrapErr};
 use commands::read_shell;
 
-
 /// Instal LLVM tools
 #[derive(FromArgs, PartialEq, Debug)]
 #[argp(subcommand, name = "install")]
@@ -14,7 +13,7 @@ struct InstallSubcommand {
     #[argp(positional)]
     name: String,
 
-    /// Options: 16, 17
+    /// Options: 16, 17, 18
     #[argp(positional)]
     version: String,
 }
@@ -56,13 +55,13 @@ async fn main() -> Result<(), Report> {
         Commands::Install(cmd) => commands::install::run(&args, cmd)
             .await
             .wrap_err_with(|| format!("Unable to install {} {}", cmd.name, cmd.version)),
-        Commands::Env(cmd) if cmd.shell == "bash"=> {
+        Commands::Env(cmd) if cmd.shell == "bash" => {
             let shell = read_shell().wrap_err("Unable to read shell configuration")?;
             for (k, v) in shell.env_vars {
                 println!("export {k}={v}",);
             }
             Ok(())
         }
-        _ => todo!()
+        _ => todo!(),
     }
 }
