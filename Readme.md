@@ -15,11 +15,11 @@ cargo install --git https://github.com/milkyapps/llvmgr
 > llvmgr install --help
 Usage: llvmgr install [-v] <name> <version>
 
-Instal LLVM tools
+Install LLVM tools
 
 Arguments:
   name           Options: llvm
-  version        Options: 16, 17
+  version        Options: 16, 17, 18
 
 Options:
   -v, --verbose  Be verbose.

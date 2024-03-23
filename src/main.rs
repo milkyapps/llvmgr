@@ -5,7 +5,7 @@ use argp::FromArgs;
 use color_eyre::{eyre::Report, eyre::WrapErr};
 use commands::read_shell;
 
-/// Instal LLVM tools
+/// Install LLVM tools
 #[derive(FromArgs, PartialEq, Debug)]
 #[argp(subcommand, name = "install")]
 struct InstallSubcommand {
