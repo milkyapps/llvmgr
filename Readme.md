@@ -38,6 +38,7 @@ This will export all installed versions as `LLVM_SYS_*_PREFIX` environment varia
 
 ```
 > llvmgr env bash
-export LLVM_SYS_160_PREFIX=/home/xunilrj/.cache/llvmgr/16.0.1
 export LLVM_SYS_170_PREFIX=/home/xunilrj/.cache/llvmgr/17.0.6
+export LLVM_SYS_180_PREFIX=/home/xunilrj/.cache/llvmgr/18.1.2
+export LLVM_SYS_160_PREFIX=/home/xunilrj/.cache/llvmgr/16.0.1
 ```
