@@ -9,7 +9,7 @@ pub struct Tasks {
 
 impl Drop for Tasks {
     fn drop(&mut self) {
-        self.sender.send(Messages::Kill).unwrap();
+        let _ = self.sender.send(Messages::Kill);
     }
 }
 
@@ -20,25 +20,31 @@ pub struct TaskRef {
 
 impl TaskRef {
     pub fn set_subtask(&self, subtask: &str) {
-        self.sender
-            .send(Messages::SetSubtask(self.id, subtask.into(), None))
-            .unwrap();
+        let _ = self
+            .sender
+            .send(Messages::SetSubtask(self.id, subtask.into(), None));
     }
 
     pub fn set_subtask_with_percentage(&self, subtask: &str, p: f64) {
-        self.sender
-            .send(Messages::SetSubtask(self.id, subtask.into(), Some(p)))
-            .unwrap();
+        let _ = self
+            .sender
+            .send(Messages::SetSubtask(self.id, subtask.into(), Some(p)));
     }
 
+    /// Mark the task as done with a checkmark message.
     pub fn finish(&self) {
-        self.sender.send(Messages::Finish(self.id)).unwrap();
+        let _ = self.sender.send(Messages::Finish(self.id, None));
+    }
+
+    /// Mark the task as done with a custom trailing message (e.g. "skipped, already done").
+    pub fn finish_with_message(&self, msg: &str) {
+        let _ = self.sender.send(Messages::Finish(self.id, Some(msg.into())));
     }
 
     pub fn set_percentage(&self, p: f64) {
-        self.sender
-            .send(Messages::SetPercentage(self.id, p))
-            .unwrap();
+        let _ = self
+            .sender
+            .send(Messages::SetPercentage(self.id, p.clamp(0.0, 1.0)));
     }
 }
 
@@ -53,10 +59,9 @@ impl Task {
     pub fn update(&self, i: usize, n: usize) {
         self.pb.set_prefix(format!("[{}/{}]", i + 1, n));
 
-        let mut msg = if let Some(subtask) = self.subtask.as_ref() {
-            format!("{} - {}", self.name, subtask)
-        } else {
-            self.name.clone()
+        let mut msg = match self.subtask.as_ref() {
+            Some(subtask) => format!("{} - {}", self.name, subtask),
+            None => self.name.clone(),
         };
 
         if msg.len() > self.width {
@@ -77,33 +82,39 @@ impl Task {
 pub enum Messages {
     NewTask { name: String },
     SetSubtask(usize, String, Option<f64>),
-    Finish(usize),
-    SetPercentage(usize, f64), // between 0 and 1,
+    Finish(usize, Option<String>),
+    SetPercentage(usize, f64), // between 0 and 1
     Kill,
+}
+
+fn build_style(msg_width: usize) -> ProgressStyle {
+    ProgressStyle::with_template(&format!(
+        "{{prefix:.bold.dim}} {{spinner}} {{msg:{msg_width}.cyan}} {{bar:30.cyan/blue}} {{percent:>3}}% {{eta:.dim}}"
+    ))
+    .expect("progress template is valid")
+    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+    .progress_chars("█▓▒░ ")
 }
 
 async fn tick_progress_bars(r: flume::Receiver<Messages>) {
     let (w, _) = term_size::dimensions().unwrap_or((80, 0));
-
-    let msg_width = w - 55;
-    let template =
-        format!("{{prefix:.bold.dim}} {{spinner}} {{msg:{msg_width}}} {{bar:40}} {{eta}}");
+    // Reserve room for prefix(8) + spinner(1) + spaces + bar(30) + percent(4) + eta(8).
+    let msg_width = w.saturating_sub(60).max(10);
 
     let m = MultiProgress::new();
-    let style = ProgressStyle::with_template(&template)
-        .expect("should not fail")
-        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
-    let mut tasks = vec![];
+    let style = build_style(msg_width);
+    let mut tasks: Vec<Task> = vec![];
 
     loop {
         tokio::select! {
             msg = r.recv_async() => {
                 match msg {
-                    Ok(Messages::NewTask{ name }) => {
+                    Ok(Messages::NewTask { name }) => {
                         let pb = m.add(ProgressBar::new(100));
                         pb.set_style(style.clone());
+                        pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-                        let t= Task { name, subtask: None, pb, width: msg_width };
+                        let t = Task { name, subtask: None, pb, width: msg_width };
                         tasks.push(t);
 
                         let n = tasks.len();
@@ -112,26 +123,30 @@ async fn tick_progress_bars(r: flume::Receiver<Messages>) {
                         }
                     }
                     Ok(Messages::SetSubtask(i, subtask, p)) => {
-                        tasks[i].subtask = Some(subtask);
-                        tasks[i].pb.set_position((p.unwrap_or_default() * 100.0) as u64);
-                        tasks[i].update(i, tasks.len());
+                        let n = tasks.len();
+                        if let Some(t) = tasks.get_mut(i) {
+                            t.subtask = Some(subtask);
+                            t.pb.set_position((p.unwrap_or_default() * 100.0) as u64);
+                            t.update(i, n);
+                        }
                     }
-                    Ok(Messages::Finish(i)) => {
-                        tasks[i].subtask = None;
-                        tasks[i].pb.finish();
-                        tasks[i].update(i, tasks.len());
+                    Ok(Messages::Finish(i, msg)) => {
+                        if let Some(t) = tasks.get(i) {
+                            t.pb.set_position(100);
+                            let suffix = msg
+                                .as_deref()
+                                .map(|m| format!(" ✓ ({m})"))
+                                .unwrap_or_else(|| " ✓".to_string());
+                            t.pb.finish_with_message(format!("{}{}", t.name, suffix));
+                        }
                     }
                     Ok(Messages::SetPercentage(i, p)) => {
-                        tasks[i].pb.set_position((p * 100.0) as u64);
+                        if let Some(t) = tasks.get(i) {
+                            t.pb.set_position((p * 100.0) as u64);
+                        }
                     }
-                    Ok(Messages::Kill) | Err(_) => break
+                    Ok(Messages::Kill) | Err(_) => break,
                 }
-            }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(1000)) => {
-                // let n = tasks.len();
-                // for (i, t) in tasks.iter().enumerate() {
-                //     t.update(i, n);
-                // }
             }
         }
     }

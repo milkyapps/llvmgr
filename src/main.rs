@@ -13,9 +13,26 @@ struct InstallSubcommand {
     #[argp(positional)]
     name: String,
 
-    /// Options: 16, 17, 18, 19
+    /// LLVM version to install: a major (19), major.minor (19.1) or full
+    /// version (19.1.7). Supported lines: 18.1, 19.1, 20.1, 21.1, 22.1, 23.1.
+    /// The legacy `16` is also supported.
     #[argp(positional)]
     version: String,
+
+    /// Components to build (comma-separated). Available: clang, lld, lldb,
+    /// clang-tools-extra, compiler-rt, polly, flang, bolt. Default: clang,lld.
+    /// Use this to build only what you need, e.g. `--components lld`.
+    #[argp(option, short = 'c', long = "components")]
+    components: Option<String>,
+
+    /// LLVM targets to build (comma-separated), e.g. `Native` or
+    /// `X86,AArch64`. Default: Native.
+    #[argp(option, short = 't', long = "targets")]
+    targets: Option<String>,
+
+    /// Reinstall from scratch, discarding any previous progress.
+    #[argp(switch, short = 'r', long = "reinstall")]
+    reinstall: bool,
 }
 
 /// Setup shell environment variables

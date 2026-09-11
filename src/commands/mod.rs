@@ -68,7 +68,7 @@ pub(crate) enum DownloadError {
     Reqwest(reqwest::Error),
     #[error("http error")]
     Http(reqwest::StatusCode),
-    #[error("Content-Length header {0}")]
+    #[error("content-length mismatch: {0}")]
     ContentLength(String),
     #[error("io error")]
     IO(tokio::io::Error),
@@ -88,37 +88,48 @@ async fn download(
         .path_segments()
         .ok_or_else(|| DownloadError::InvalidUrl("url does not have segments".to_string()))?
         .last()
-        .ok_or_else(|| DownloadError::InvalidUrl("url does not have segments".to_string()))?;
+        .ok_or_else(|| DownloadError::InvalidUrl("url does not have segments".to_string()))?
+        .to_string();
 
     let cache_root = cache_root().map_err(DownloadError::CacheUnavailable)?;
-    let cache_file_path = cache_root.join(file_name);
-    if cache_file_path.exists() {
+    let cache_file_path = cache_root.join(&file_name);
+
+    // Reuse a previously completed download, but only after validating it. A
+    // truncated or non-archive file (e.g. an HTML error page saved by a failed
+    // run) is removed so we re-download from scratch instead of dying on it.
+    if cached_archive_usable(&cache_root, &file_name) {
+        let _ = std::fs::remove_file(cache_root.join(format!("{file_name}.part")));
         return Ok(DownloadResult {
             path: cache_file_path,
         });
     }
 
+    // Download to a `.part` sidecar and only promote it to the final name once
+    // the transfer completes. An interrupted download therefore never leaves a
+    // file that looks complete.
+    let part_path = cache_root.join(format!("{file_name}.part"));
     let mut cache_file = tokio::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&cache_file_path)
+        .open(&part_path)
         .await
         .map_err(DownloadError::IO)?;
 
     let req = reqwest::get(url).await.map_err(DownloadError::Reqwest)?;
     let status = req.status();
     if !status.is_success() {
+        let _ = std::fs::remove_file(&part_path);
         return Err(DownloadError::Http(status));
     }
 
     let content_length = req
         .headers()
         .get(reqwest::header::CONTENT_LENGTH)
-        .and_then(|x| x.to_str().ok()?.parse::<f64>().ok());
+        .and_then(|x| x.to_str().ok()?.parse::<u64>().ok());
 
     use futures_util::StreamExt;
-    let mut completed = 0.0;
+    let mut total_bytes = 0u64;
     let mut stream = req.bytes_stream();
     while let Some(item) = stream.next().await {
         let bytes = item.map_err(DownloadError::Reqwest)?;
@@ -126,19 +137,93 @@ async fn download(
             .write_all(&bytes)
             .await
             .map_err(DownloadError::IO)?;
+        total_bytes += bytes.len() as u64;
 
         if let Some(content_length) = content_length.as_ref() {
-            completed += bytes.len() as f64 / content_length;
-            t.set_percentage(completed)
+            t.set_percentage(total_bytes as f64 / *content_length as f64);
         } else {
-            completed += bytes.len() as f64;
-            t.set_subtask(&format!("{} bytes", completed));
+            t.set_subtask(&format!("{} bytes", total_bytes));
         }
+    }
+    cache_file.flush().await.map_err(DownloadError::IO)?;
+    drop(cache_file);
+
+    if let Some(expected) = content_length {
+        if total_bytes != expected {
+            let _ = std::fs::remove_file(&part_path);
+            return Err(DownloadError::ContentLength(format!(
+                "expected {expected} bytes, got {total_bytes}"
+            )));
+        }
+    }
+
+    // Promote the completed download to its final name.
+    std::fs::rename(&part_path, &cache_file_path).map_err(|e| {
+        let _ = std::fs::remove_file(&part_path);
+        DownloadError::IO(e)
+    })?;
+
+    // Record the expected size so a future truncated file is detected without
+    // needing to decompress it first.
+    if let Some(expected) = content_length {
+        let _ = std::fs::write(
+            cache_root.join(format!("{file_name}.size")),
+            expected.to_string(),
+        );
     }
 
     Ok(DownloadResult {
         path: cache_file_path,
     })
+}
+
+/// Decide whether a cached archive at `<cache_root>/<file_name>` is safe to
+/// reuse. Returns `false` (and removes the offending file) when it is missing,
+/// empty, truncated, or does not have the right magic bytes for its format.
+fn cached_archive_usable(cache_root: &Path, file_name: &str) -> bool {
+    let path = cache_root.join(file_name);
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return false;
+    };
+    if meta.len() == 0 {
+        let _ = std::fs::remove_file(&path);
+        return false;
+    }
+
+    // If we recorded the expected size on download, a mismatch means truncation.
+    let size_sidecar = cache_root.join(format!("{file_name}.size"));
+    if let Ok(expected) = std::fs::read_to_string(&size_sidecar) {
+        if let Ok(expected) = expected.trim().parse::<u64>() {
+            if meta.len() != expected {
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(&size_sidecar);
+                return false;
+            }
+        }
+    }
+
+    // Sanity check the magic bytes so a non-archive (e.g. an HTML error page
+    // saved by a failed run) is never treated as a valid download.
+    let Ok(mut f) = std::fs::File::open(&path) else {
+        return false;
+    };
+    use std::io::Read;
+    let mut head = [0u8; 6];
+    let _ = f.read_exact(&mut head);
+    let magic_ok = if file_name.ends_with(".gz") || file_name.ends_with(".tgz") {
+        head[0] == 0x1f && head[1] == 0x8b
+    } else if file_name.ends_with(".xz") {
+        head[..6] == [0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]
+    } else {
+        true // unknown format: trust the size checks
+    };
+    if !magic_ok {
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&size_sidecar);
+        return false;
+    }
+
+    true
 }
 
 #[derive(Error, Debug)]
@@ -289,8 +374,27 @@ pub(crate) async fn download_unxz_untar(
         .map_err(DownloadDecompressError::Download)?;
     let llvm_tar = unxz(t, &llvm_tar_xz.path)
         .await
-        .map_err(DownloadDecompressError::Unxz)?;
-    untar_from_vec(t, llvm_tar, dest).map_err(DownloadDecompressError::Untar)?;
+        .map_err(|e| {
+            // The archive is corrupt or incomplete; drop it (and its size
+            // sidecar) so the next run re-downloads from scratch instead of
+            // failing the same way.
+            let _ = std::fs::remove_file(&llvm_tar_xz.path);
+            let _ = std::fs::remove_file(std::path::PathBuf::from(format!(
+                "{}.size",
+                llvm_tar_xz.path.display()
+            )));
+            DownloadDecompressError::Unxz(e)
+        })?;
+    untar_from_vec(t, llvm_tar, dest).map_err(|e| {
+        // Treat an extract failure as a corrupt archive too: drop it so the
+        // next run re-downloads instead of failing the same way.
+        let _ = std::fs::remove_file(&llvm_tar_xz.path);
+        let _ = std::fs::remove_file(std::path::PathBuf::from(format!(
+            "{}.size",
+            llvm_tar_xz.path.display()
+        )));
+        DownloadDecompressError::Untar(e)
+    })?;
 
     Ok(())
 }
@@ -306,8 +410,26 @@ pub(crate) async fn download_ungz_untar(
     let llvm_tar_gz_file_path = llvm_tar_gz.path.to_path_buf();
     let llvm_tar = ungz(t, &llvm_tar_gz.path)
         .await
-        .map_err(DownloadDecompressError::Ungz)?;
-    untar_from_vec(t, llvm_tar, dest).map_err(DownloadDecompressError::Untar)?;
+        .map_err(|e| {
+            // The archive is corrupt or incomplete; drop it (and its size
+            // sidecar) so the next run re-downloads from scratch.
+            let _ = std::fs::remove_file(&llvm_tar_gz.path);
+            let _ = std::fs::remove_file(std::path::PathBuf::from(format!(
+                "{}.size",
+                llvm_tar_gz.path.display()
+            )));
+            DownloadDecompressError::Ungz(e)
+        })?;
+    untar_from_vec(t, llvm_tar, dest).map_err(|e| {
+        // Treat an extract failure as a corrupt archive too: drop it so the
+        // next run re-downloads instead of failing the same way.
+        let _ = std::fs::remove_file(&llvm_tar_gz.path);
+        let _ = std::fs::remove_file(std::path::PathBuf::from(format!(
+            "{}.size",
+            llvm_tar_gz.path.display()
+        )));
+        DownloadDecompressError::Untar(e)
+    })?;
 
     Ok(llvm_tar_gz_file_path)
 }
@@ -423,10 +545,6 @@ pub(crate) fn search_cmake() -> Option<PathBuf> {
     let cmake = if cmake.is_ok() {
         cmake
     } else {
-        #[cfg(target_os = "linux")]
-        {
-            cmake
-        }
         #[cfg(target_os = "windows")]
         {
             let path: PathBuf = "C:\\Program Files\\CMake\\bin\\cmake.exe".into();
@@ -435,6 +553,10 @@ pub(crate) fn search_cmake() -> Option<PathBuf> {
             } else {
                 cmake
             }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            cmake
         }
     };
 
@@ -449,6 +571,10 @@ pub(crate) fn suggest_install_cmake() -> String {
     #[cfg(target_os = "windows")]
     {
         "If chocolatey is installed, one can install cmake with `choco install cmake`".into()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        "Install cmake, e.g. with Homebrew: `brew install cmake`".into()
     }
 }
 
@@ -476,5 +602,11 @@ pub(crate) fn get_cmake_default_generator(cmake: PathBuf) -> Result<String, Repo
         Err(color_eyre::eyre::eyre!("No defaut generator installed"))
             .wrap_err("cmake has not found any generator")
             .with_suggestion(|| "Install `Microsoft Visual Studio`")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err(color_eyre::eyre::eyre!("No defaut generator installed"))
+            .wrap_err("cmake has not found any generator")
+            .with_suggestion(|| "Install `ninja`, e.g. with Homebrew: `brew install ninja`")
     }
 }
