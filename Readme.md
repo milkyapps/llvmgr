@@ -46,11 +46,11 @@ patch release:
 | Line | Release  | llvm-sys env var        |
 |------|----------|-------------------------|
 | 18.1 | 18.1.8   | `LLVM_SYS_180_PREFIX`   |
-| 19.1 | 19.1.7   | `LLVM_SYS_190_PREFIX`   |
-| 20.1 | 20.1.8   | `LLVM_SYS_200_PREFIX`   |
-| 21.1 | 21.1.7   | `LLVM_SYS_210_PREFIX`   |
-| 22.1 | 22.1.8   | `LLVM_SYS_220_PREFIX`   |
-| 23.1 | 23.1.0   | `LLVM_SYS_230_PREFIX`   |
+| 19.1 | 19.1.7   | `LLVM_SYS_191_PREFIX`   |
+| 20.1 | 20.1.8   | `LLVM_SYS_201_PREFIX`   |
+| 21.1 | 21.1.7   | `LLVM_SYS_211_PREFIX`   |
+| 22.1 | 22.1.8   | `LLVM_SYS_221_PREFIX`   |
+| 23.1 | 23.1.0   | `LLVM_SYS_231_PREFIX`   |
 
 The legacy `16` (split source tarballs) is still supported.
 
@@ -107,5 +107,5 @@ This will export all installed versions as `LLVM_SYS_*_PREFIX` environment varia
 > llvmgr env bash
 export LLVM_SYS_170_PREFIX=/home/xunilrj/.cache/llvmgr/17.0.6
 export LLVM_SYS_180_PREFIX=/home/xunilrj/.cache/llvmgr/18.1.8
-export LLVM_SYS_220_PREFIX=/home/xunilrj/.cache/llvmgr/22.1.8
+export LLVM_SYS_221_PREFIX=/home/xunilrj/.cache/llvmgr/22.1.8
 ```

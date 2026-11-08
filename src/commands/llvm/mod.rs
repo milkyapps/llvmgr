@@ -20,7 +20,7 @@ pub struct VersionSpec {
     pub major_minor: &'static str,
     /// Full release version, e.g. "22.1.8".
     pub full: &'static str,
-    /// Environment variable exported for llvm-sys, e.g. "LLVM_SYS_220_PREFIX".
+    /// Environment variable exported for llvm-sys, e.g. "LLVM_SYS_221_PREFIX".
     pub env_var: &'static str,
 }
 
@@ -28,11 +28,11 @@ pub struct VersionSpec {
 /// Patches are pinned to the latest known good release of each line.
 pub static VERSIONS: &[VersionSpec] = &[
     VersionSpec { major_minor: "18.1", full: "18.1.8",  env_var: "LLVM_SYS_180_PREFIX" },
-    VersionSpec { major_minor: "19.1", full: "19.1.7",  env_var: "LLVM_SYS_190_PREFIX" },
-    VersionSpec { major_minor: "20.1", full: "20.1.8",  env_var: "LLVM_SYS_200_PREFIX" },
-    VersionSpec { major_minor: "21.1", full: "21.1.7",  env_var: "LLVM_SYS_210_PREFIX" },
-    VersionSpec { major_minor: "22.1", full: "22.1.8",  env_var: "LLVM_SYS_220_PREFIX" },
-    VersionSpec { major_minor: "23.1", full: "23.1.0",  env_var: "LLVM_SYS_230_PREFIX" },
+    VersionSpec { major_minor: "19.1", full: "19.1.7",  env_var: "LLVM_SYS_191_PREFIX" },
+    VersionSpec { major_minor: "20.1", full: "20.1.8",  env_var: "LLVM_SYS_201_PREFIX" },
+    VersionSpec { major_minor: "21.1", full: "21.1.7",  env_var: "LLVM_SYS_211_PREFIX" },
+    VersionSpec { major_minor: "22.1", full: "22.1.8",  env_var: "LLVM_SYS_221_PREFIX" },
+    VersionSpec { major_minor: "23.1", full: "23.1.0",  env_var: "LLVM_SYS_231_PREFIX" },
 ];
 
 /// Resolve a user supplied version string (major, major.minor or full) to a
@@ -282,7 +282,7 @@ fn build_configured(version: &str) -> bool {
 /// Download, compile and install a specific LLVM version.
 ///
 /// `version` is the full release version (e.g. "22.1.8"), `env_var` is the
-/// llvm-sys prefix variable to record (e.g. "LLVM_SYS_220_PREFIX").
+/// llvm-sys prefix variable to record (e.g. "LLVM_SYS_221_PREFIX").
 ///
 /// The install is resumable: each stage (download/extract, configure, build,
 /// install) is skipped when its output is already on disk, and Ninja resumes
